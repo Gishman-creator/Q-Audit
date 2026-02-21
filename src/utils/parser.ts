@@ -5,6 +5,9 @@ export interface DataPoint {
   volume: number;
   date: Date;
   type?: string;
+  swap?: number;
+  commission?: number;
+  rawProfit?: number;
 }
 
 export interface ReportMeta {
@@ -172,7 +175,7 @@ export const processData = (htmlContent: string): ParsedResult => {
         // This ensures Total Net Profit matches the report exactly regardless of sign
         const profit = rawProfit + swap + commission;
         
-        deals.push({ time: timeStr, balance, profit, volume, date: new Date(timeStr.replace(/\./g, '-')), type });
+        deals.push({ time: timeStr, balance, profit, volume, date: new Date(timeStr.replace(/\./g, '-')), type, swap, commission, rawProfit });
       }
     }
   });
@@ -180,7 +183,7 @@ export const processData = (htmlContent: string): ParsedResult => {
   const data = deals.length > 0 ? deals.sort((a, b) => a.date.getTime() - b.date.getTime()) : [];
 
   // Calculate Net Profit from data (Sum of all profits excluding deposits/withdrawals)
-  const calculatedNetProfit = data.reduce((sum, d) => {
+  data.reduce((sum, d) => {
       const isNonTrade = d.type 
          ? ['balance', 'deposit', 'withdrawal'].some(t => d.type?.includes(t))
          : d.volume === 0;

@@ -4,6 +4,7 @@ import {
     BarChart, Bar, Cell, ReferenceLine, LabelList
 } from 'recharts';
 import { type DataPoint, type ReportMeta } from '../utils/parser';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 interface DashboardProps {
     data: DataPoint[];
@@ -16,40 +17,67 @@ const Dashboard: React.FC<DashboardProps> = ({ data, initialDeposit, reportMeta 
     const [viewMode, setViewMode] = useState('percentage');
     const primaryColor = '#6366f1';
 
+    const availableYears = useMemo(() => {
+        return Array.from(new Set(data.map(d => d.date.getFullYear()))).sort((a, b) => b - a);
+    }, [data]);
+    const [selectedYear, setSelectedYear] = useState<number>(availableYears[0] ?? new Date().getFullYear());
+
+    // Update selectedYear if availableYears changes
+    React.useEffect(() => {
+        if (availableYears.length > 0 && !availableYears.includes(selectedYear)) {
+            setSelectedYear(availableYears[0]);
+        }
+    }, [availableYears, selectedYear]);
+
     const chartStats = useMemo(() => {
         if (data.length === 0) return { monthly: [], yearly: [] };
 
+        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
         const mSub: Record<string, { label: string; profit: number; startBal: number }> = {};
         const ySub: Record<string, { label: string; profit: number; startBal: number }> = {};
-        let runningBal = initialDeposit || data[0].balance;
+        let runningBal = initialDeposit || (data.length > 0 ? data[0].balance : 0);
+
+        months.forEach(m => {
+            mSub[m] = { label: m, profit: 0, startBal: -1 };
+        });
 
         data.forEach(deal => {
             const year = deal.date.getFullYear();
             const month = deal.date.toLocaleString('default', { month: 'short' });
-            const mKey = `${year}-${month}`;
 
-            if (!mSub[mKey]) mSub[mKey] = { label: mKey, profit: 0, startBal: runningBal };
             if (!ySub[year]) ySub[year] = { label: year.toString(), profit: 0, startBal: runningBal };
+
+            if (year === selectedYear) {
+                if (mSub[month] && mSub[month].startBal === -1) {
+                    mSub[month].startBal = runningBal;
+                }
+            }
 
             const isTrade = deal.type
                 ? !['balance', 'deposit', 'withdrawal'].some(t => deal.type?.includes(t))
                 : deal.volume > 0;
 
             if (isTrade) {
-                mSub[mKey].profit += deal.profit;
+                if (year === selectedYear) {
+                    mSub[month].profit += deal.profit;
+                }
                 ySub[year].profit += deal.profit;
             }
 
             runningBal += deal.profit;
         });
 
+        months.forEach(m => {
+            if (mSub[m] && mSub[m].startBal === -1) mSub[m].startBal = 1;
+        });
+
         const format = (obj: any) => Object.values(obj).map((v: any) => ({
             ...v,
-            val: parseFloat((viewMode === 'percentage' ? (v.profit / v.startBal) * 100 : v.profit).toFixed(2))
+            val: parseFloat((viewMode === 'percentage' ? (v.profit / (v.startBal || 1)) * 100 : v.profit).toFixed(2))
         }));
 
         return { monthly: format(mSub), yearly: format(ySub) };
-    }, [data, initialDeposit, viewMode]);
+    }, [data, initialDeposit, viewMode, selectedYear]);
 
     return (
         <div className="space-y-6">
@@ -72,15 +100,37 @@ const Dashboard: React.FC<DashboardProps> = ({ data, initialDeposit, reportMeta 
             </div>
 
             <div className="bg-[#11141d] p-8 rounded-3xl border border-slate-800 shadow-sm">
-                <div className="flex justify-between items-center mb-10">
-                    <select value={perfView} onChange={(e) => setPerfView(e.target.value)} className="bg-transparent text-xl font-black text-white outline-none cursor-pointer">
-                        <option value="monthly" className="bg-[#11141d]">MONTHLY GAINS</option>
-                        <option value="yearly" className="bg-[#11141d]">YEARLY GAINS</option>
-                    </select>
-                    <div className="flex bg-[#080a0f] p-1 rounded-lg border border-slate-800">
-                        <button onClick={() => setViewMode('percentage')} className={`px-4 py-1 text-[10px] font-bold rounded ${viewMode === 'percentage' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>%</button>
-                        <button onClick={() => setViewMode('money')} className={`px-4 py-1 text-[10px] font-bold rounded ${viewMode === 'money' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>$</button>
+                <div className="flex flex-col mb-10 gap-4">
+                    <div className="flex justify-between items-center">
+                        <div className="w-[300px]">
+                            <Select value={perfView} onValueChange={setPerfView}>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select view" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="monthly">MONTHLY GAINS</SelectItem>
+                                    <SelectItem value="yearly">YEARLY GAINS</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="flex bg-[#080a0f] p-1 rounded-lg border border-slate-800">
+                            <button onClick={() => setViewMode('percentage')} className={`px-4 py-1 text-[10px] font-bold rounded ${viewMode === 'percentage' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>%</button>
+                            <button onClick={() => setViewMode('money')} className={`px-4 py-1 text-[10px] font-bold rounded ${viewMode === 'money' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>$</button>
+                        </div>
                     </div>
+                    {perfView === 'monthly' && (
+                        <div className="flex flex-wrap gap-2">
+                            {availableYears.map(year => (
+                                <button
+                                    key={year}
+                                    onClick={() => setSelectedYear(year)}
+                                    className={`px-4 py-2 text-xs font-bold rounded-lg border transition-colors ${selectedYear === year ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-[#11141d] border-slate-700 text-slate-400 hover:text-white'}`}
+                                >
+                                    {year}
+                                </button>
+                            ))}
+                        </div>
+                    )}
                 </div>
                 <div className="h-[300px] w-full">
                     <ResponsiveContainer width="100%" height="100%">

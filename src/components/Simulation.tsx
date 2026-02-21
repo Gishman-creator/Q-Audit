@@ -9,6 +9,7 @@ import { calculateStats } from '../utils/statistics';
 import { setLotSize } from '../store/simulationSlice';
 import type { RootState } from '../store/store';
 import Statistics from './Statistics';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 interface SimulationProps {
     data: DataPoint[];
@@ -27,6 +28,17 @@ const Simulation: React.FC<SimulationProps> = ({ data, initialDeposit, reportMet
 
     const [perfView, setPerfView] = useState('monthly');
     const [viewMode, setViewMode] = useState('percentage');
+
+    const availableYears = useMemo(() => {
+        return Array.from(new Set(data.map(d => d.date.getFullYear()))).sort((a, b) => b - a);
+    }, [data]);
+    const [selectedYear, setSelectedYear] = useState<number>(availableYears[0] ?? new Date().getFullYear());
+
+    useEffect(() => {
+        if (availableYears.length > 0 && !availableYears.includes(selectedYear)) {
+            setSelectedYear(availableYears[0]);
+        }
+    }, [availableYears, selectedYear]);
 
     const { isFixedLot, originalLotSize } = useMemo(() => {
         if (data.length === 0) return { isFixedLot: false, originalLotSize: 0 };
@@ -63,9 +75,16 @@ const Simulation: React.FC<SimulationProps> = ({ data, initialDeposit, reportMet
             let simulatedProfit = deal.profit;
 
             if (deal.volume > 0) {
-                // Profit = Volume * Points * ValuePerPoint
-                // SimProfit = NewLot * (Profit / OldVolume)
-                simulatedProfit = (deal.profit / deal.volume) * currentLotSize;
+                const originalRawProfit = deal.rawProfit || 0;
+                const originalCommission = deal.commission || 0;
+                const originalSwap = deal.swap || 0;
+
+                const ratio = currentLotSize / deal.volume;
+                const simRawProfit = originalRawProfit * ratio;
+                const simCommission = originalCommission * ratio;
+                const simSwap = originalSwap;
+
+                simulatedProfit = simRawProfit + simSwap + simCommission;
             }
 
             currentBalance += simulatedProfit;
@@ -90,21 +109,32 @@ const Simulation: React.FC<SimulationProps> = ({ data, initialDeposit, reportMet
         }
 
         // Chart Stats (Monthly/Yearly)
+        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
         const mSub: Record<string, { label: string; profit: number; startBal: number }> = {};
         const ySub: Record<string, { label: string; profit: number; startBal: number }> = {};
-        let runningBal = initialDeposit;
+        let runningBal = initialDeposit || (statsInput.length > 0 ? statsInput[0].balance : 0);
+
+        months.forEach(m => {
+            mSub[m] = { label: m, profit: 0, startBal: -1 };
+        });
 
         statsInput.forEach(deal => {
             const year = deal.date.getFullYear();
             const month = deal.date.toLocaleString('default', { month: 'short' });
-            const mKey = `${year}-${month}`;
 
-            if (!mSub[mKey]) mSub[mKey] = { label: mKey, profit: 0, startBal: runningBal };
             if (!ySub[year]) ySub[year] = { label: year.toString(), profit: 0, startBal: runningBal };
+
+            if (year === selectedYear) {
+                if (mSub[month] && mSub[month].startBal === -1) {
+                    mSub[month].startBal = runningBal;
+                }
+            }
 
             // Only count TRADES for performance stats (exclude deposits/withdrawals)
             if (deal.volume > 0) {
-                mSub[mKey].profit += deal.profit;
+                if (year === selectedYear) {
+                    mSub[month].profit += deal.profit;
+                }
                 ySub[year].profit += deal.profit;
             }
 
@@ -112,9 +142,13 @@ const Simulation: React.FC<SimulationProps> = ({ data, initialDeposit, reportMet
             runningBal += deal.profit;
         });
 
+        months.forEach(m => {
+            if (mSub[m] && mSub[m].startBal === -1) mSub[m].startBal = 1;
+        });
+
         const format = (obj: any) => Object.values(obj).map((v: any) => ({
             ...v,
-            val: parseFloat((viewMode === 'percentage' ? (v.profit / v.startBal) * 100 : v.profit).toFixed(2))
+            val: parseFloat((viewMode === 'percentage' ? (v.profit / (v.startBal || 1)) * 100 : v.profit).toFixed(2))
         }));
 
         const cStats = { monthly: format(mSub), yearly: format(ySub) };
@@ -132,7 +166,7 @@ const Simulation: React.FC<SimulationProps> = ({ data, initialDeposit, reportMet
             comparison: { original: origProfit, simulated: simProfit, diff, diffPercent }
         };
 
-    }, [data, initialDeposit, currentLotSize, isFixedLot, viewMode, originalMeta]);
+    }, [data, initialDeposit, currentLotSize, isFixedLot, viewMode, originalMeta, selectedYear]);
 
     const avgPerWeek = useMemo(() => {
         if (data.length === 0) return 0;
@@ -229,17 +263,38 @@ const Simulation: React.FC<SimulationProps> = ({ data, initialDeposit, reportMet
                     </ResponsiveContainer>
                 </div>
 
-                {/* Bar Charts Section */}
                 <div className="bg-[#11141d] p-8 rounded-3xl border border-slate-800 shadow-sm mb-8">
-                    <div className="flex justify-between items-center mb-10">
-                        <select value={perfView} onChange={(e) => setPerfView(e.target.value)} className="bg-transparent text-xl font-black text-white outline-none cursor-pointer">
-                            <option value="monthly" className="bg-[#11141d]">MONTHLY GAINS (SIMULATED)</option>
-                            <option value="yearly" className="bg-[#11141d]">YEARLY GAINS (SIMULATED)</option>
-                        </select>
-                        <div className="flex bg-[#080a0f] p-1 rounded-lg border border-slate-800">
-                            <button onClick={() => setViewMode('percentage')} className={`px-4 py-1 text-[10px] font-bold rounded ${viewMode === 'percentage' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>%</button>
-                            <button onClick={() => setViewMode('money')} className={`px-4 py-1 text-[10px] font-bold rounded ${viewMode === 'money' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>$</button>
+                    <div className="flex flex-col mb-10 gap-4">
+                        <div className="flex justify-between items-center w-full">
+                            <div className="w-[350px]">
+                                <Select value={perfView} onValueChange={setPerfView}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select view" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="monthly">MONTHLY GAINS (SIMULATED)</SelectItem>
+                                        <SelectItem value="yearly">YEARLY GAINS (SIMULATED)</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="flex bg-[#080a0f] p-1 rounded-lg border border-slate-800 shrink-0">
+                                <button onClick={() => setViewMode('percentage')} className={`px-4 py-1 text-[10px] font-bold rounded ${viewMode === 'percentage' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>%</button>
+                                <button onClick={() => setViewMode('money')} className={`px-4 py-1 text-[10px] font-bold rounded ${viewMode === 'money' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>$</button>
+                            </div>
                         </div>
+                        {perfView === 'monthly' && (
+                            <div className="flex flex-wrap gap-2">
+                                {availableYears.map(year => (
+                                    <button
+                                        key={year}
+                                        onClick={() => setSelectedYear(year)}
+                                        className={`px-4 py-2 text-xs font-bold rounded-lg border transition-colors ${selectedYear === year ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-[#11141d] border-slate-700 text-slate-400 hover:text-white'}`}
+                                    >
+                                        {year}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                     </div>
                     <div className="h-[300px] w-full">
                         <ResponsiveContainer width="100%" height="100%">
